@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"runtime"
 	"strconv"
@@ -42,6 +43,8 @@ import (
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/urfave/cli/v2"
+
+	_ "net/http/pprof"
 )
 
 var (
@@ -190,6 +193,9 @@ This command dumps out the state for a given block (or latest, if none provided)
 // initGenesis will initialise the given JSON format genesis file and writes it as
 // the zero'd block (i.e. genesis) or will fail hard if it can't succeed.
 func initGenesis(ctx *cli.Context) error {
+	go func() {
+		fmt.Println(http.ListenAndServe("localhost:6060", nil))
+	}()
 	if ctx.Args().Len() != 1 {
 		utils.Fatalf("need genesis.json file as the only argument")
 	}
@@ -197,6 +203,57 @@ func initGenesis(ctx *cli.Context) error {
 	if len(genesisPath) == 0 {
 		utils.Fatalf("invalid path to genesis file")
 	}
+	//file, err := os.Open(genesisPath)
+	//if err != nil {
+	//	utils.Fatalf("Failed to read genesis file: %v", err)
+	//}
+	//defer file.Close()
+
+	//genesis := new(core.Genesis)
+	//if err := json.NewDecoder(file).Decode(genesis); err != nil {
+	//	utils.Fatalf("invalid genesis file: %v", err)
+	//}
+	//// Open and initialise both full and light databases
+	//stack, _ := makeConfigNode(ctx)
+	//defer stack.Close()
+
+	//var overrides core.ChainOverrides
+	//if ctx.IsSet(utils.OverrideCancun.Name) {
+	//	v := ctx.Uint64(utils.OverrideCancun.Name)
+	//	overrides.OverrideCancun = &v
+	//}
+	//if ctx.IsSet(utils.OverrideVerkle.Name) {
+	//	v := ctx.Uint64(utils.OverrideVerkle.Name)
+	//	overrides.OverrideVerkle = &v
+	//}
+	//for _, name := range []string{"chaindata", "lightchaindata"} {
+	//	chaindb, err := stack.OpenDatabaseWithFreezer(name, 0, 0, ctx.String(utils.AncientFlag.Name), "", false)
+	//	if err != nil {
+	//		utils.Fatalf("Failed to open database: %v", err)
+	//	}
+	//	defer chaindb.Close()
+	//
+	//	triedb := utils.MakeTrieDatabase(ctx, chaindb, ctx.Bool(utils.CachePreimagesFlag.Name), false, genesis.IsVerkle())
+	//	defer triedb.Close()
+	//
+	//	fmt.Println("--debug--1--")
+	//	_, hash, err := core.SetupGenesisBlockWithOverride(chaindb, triedb, genesis, &overrides)
+	//	if err != nil {
+	//		utils.Fatalf("Failed to write genesis block: %v", err)
+	//	}
+	//	log.Info("Successfully wrote genesis state", "database", name, "hash", hash)
+	//}
+	for _, name := range []string{"chaindata", "lightchaindata"} {
+		if err := initChainDB(ctx, name, genesisPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func initChainDB(ctx *cli.Context, name string, genesisPath string) error {
+	fmt.Println("--debug--1--")
+
 	file, err := os.Open(genesisPath)
 	if err != nil {
 		utils.Fatalf("Failed to read genesis file: %v", err)
@@ -220,22 +277,22 @@ func initGenesis(ctx *cli.Context) error {
 		v := ctx.Uint64(utils.OverrideVerkle.Name)
 		overrides.OverrideVerkle = &v
 	}
-	for _, name := range []string{"chaindata", "lightchaindata"} {
-		chaindb, err := stack.OpenDatabaseWithFreezer(name, 0, 0, ctx.String(utils.AncientFlag.Name), "", false)
-		if err != nil {
-			utils.Fatalf("Failed to open database: %v", err)
-		}
-		defer chaindb.Close()
 
-		triedb := utils.MakeTrieDatabase(ctx, chaindb, ctx.Bool(utils.CachePreimagesFlag.Name), false, genesis.IsVerkle())
-		defer triedb.Close()
-
-		_, hash, err := core.SetupGenesisBlockWithOverride(chaindb, triedb, genesis, &overrides)
-		if err != nil {
-			utils.Fatalf("Failed to write genesis block: %v", err)
-		}
-		log.Info("Successfully wrote genesis state", "database", name, "hash", hash)
+	chaindb, err := stack.OpenDatabaseWithFreezer(name, 0, 0, ctx.String(utils.AncientFlag.Name), "", false)
+	if err != nil {
+		utils.Fatalf("Failed to open database: %v", err)
 	}
+	defer chaindb.Close()
+
+	triedb := utils.MakeTrieDatabase(ctx, chaindb, ctx.Bool(utils.CachePreimagesFlag.Name), false, genesis.IsVerkle())
+	defer triedb.Close()
+
+	_, hash, err := core.SetupGenesisBlockWithOverride(chaindb, triedb, genesis, &overrides)
+	if err != nil {
+		utils.Fatalf("Failed to write genesis block: %v", err)
+	}
+	log.Info("Successfully wrote genesis state", "database", name, "hash", hash)
+
 	return nil
 }
 
