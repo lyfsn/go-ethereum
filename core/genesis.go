@@ -112,6 +112,39 @@ func ReadGenesis(db ethdb.Database) (*Genesis, error) {
 	return &genesis, nil
 }
 
+// divideGenesisAllocIntoBatches divides the entire GenesisAlloc into smaller batches.
+// Each batch contains up to batchSize accounts.
+func divideGenesisAllocIntoBatches(ga *types.GenesisAlloc, batchSize int) []map[common.Address]types.Account {
+	var batches []map[common.Address]types.Account    // A slice to hold all batches
+	var currentBatch map[common.Address]types.Account // Current batch being filled
+
+	// Initialize the first batch
+	currentBatch = make(map[common.Address]types.Account)
+
+	// Account counter for the current batch
+	currentCount := 0
+
+	for addr, account := range *ga {
+		// Add the current account to the batch
+		currentBatch[addr] = account
+		currentCount++
+
+		// If the current batch reaches the batchSize, add it to batches and start a new one
+		if currentCount >= batchSize {
+			batches = append(batches, currentBatch)
+			currentBatch = make(map[common.Address]types.Account) // Start a new batch
+			currentCount = 0                                      // Reset the counter for the new batch
+		}
+	}
+
+	// Add the last batch if it has any accounts
+	if len(currentBatch) > 0 {
+		batches = append(batches, currentBatch)
+	}
+
+	return batches
+}
+
 // hashAlloc computes the state root according to the genesis specification.
 func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 	// If a genesis-time verkle trie is requested, create a trie config
@@ -127,21 +160,57 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 	// Create an ephemeral in-memory database for computing hash,
 	// all the derived states will be discarded to not pollute disk.
 	db := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), config)
-	statedb, err := state.New(types.EmptyRootHash, db, nil)
-	if err != nil {
-		return common.Hash{}, err
-	}
-	for addr, account := range *ga {
-		if account.Balance != nil {
-			statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
+	//statedb, err := state.New(types.EmptyRootHash, db, nil)
+	//if err != nil {
+	//	return common.Hash{}, err
+	//}
+
+	batchSize := 1000
+	root := common.Hash{}
+	// Divide the genesis alloc into batches
+	batches := divideGenesisAllocIntoBatches(ga, batchSize)
+	for _, batch := range batches {
+		statedb, err := state.New(common.Hash{}, db, nil)
+		if err != nil {
+			return common.Hash{}, err
 		}
-		statedb.SetCode(addr, account.Code)
-		statedb.SetNonce(addr, account.Nonce)
-		for key, value := range account.Storage {
-			statedb.SetState(addr, key, value)
+
+		for addr, account := range batch {
+			if account.Balance != nil {
+				statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
+			}
+			statedb.SetCode(addr, account.Code)
+			statedb.SetNonce(addr, account.Nonce)
+			for key, value := range account.Storage {
+				statedb.SetState(addr, key, value)
+			}
 		}
+
+		// Commit the current batch
+		root, err = statedb.Commit(0, false)
+		if err != nil {
+			return common.Hash{}, err
+		}
+		fmt.Println("--debug--Slice root:", root)
+
 	}
-	return statedb.Commit(0, false)
+
+	//root := statedb.IntermediateRoot(config.IsVerkle)
+	// Intermediate root can be obtained here if needed
+	// Final state root
+	return root, nil
+
+	//for addr, account := range *ga {
+	//	if account.Balance != nil {
+	//		statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
+	//	}
+	//	statedb.SetCode(addr, account.Code)
+	//	statedb.SetNonce(addr, account.Nonce)
+	//	for key, value := range account.Storage {
+	//		statedb.SetState(addr, key, value)
+	//	}
+	//}
+	//return statedb.Commit(0, false)
 }
 
 // flushAlloc is very similar with hash, but the main difference is all the generated
