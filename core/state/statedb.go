@@ -166,6 +166,7 @@ func New(root common.Hash, db Database, snaps *snapshot.Tree) (*StateDB, error) 
 		transientStorage:     newTransientStorage(),
 		hasher:               crypto.NewKeccakState(),
 	}
+	fmt.Println("----debug----0.0.0.1---", sdb.originalRoot)
 	if sdb.snaps != nil {
 		sdb.snap = sdb.snaps.Snapshot(root)
 	}
@@ -506,9 +507,11 @@ func (s *StateDB) updateStateObject(obj *stateObject) {
 	}
 	// Encode the account and update the account trie
 	addr := obj.Address()
+	fmt.Println("----1111----", s.trie.Hash())
 	if err := s.trie.UpdateAccount(addr, &obj.data); err != nil {
 		s.setError(fmt.Errorf("updateStateObject (%x) error: %v", addr[:], err))
 	}
+	fmt.Println("----2222----", s.trie.Hash())
 	if obj.dirtyCode {
 		s.trie.UpdateContractCode(obj.Address(), common.BytesToHash(obj.CodeHash()), obj.code)
 	}
@@ -712,6 +715,8 @@ func (s *StateDB) Copy() *StateDB {
 		snaps: s.snaps,
 		snap:  s.snap,
 	}
+	fmt.Println("----debug----0.0.0.2---", state.originalRoot)
+
 	// Copy the dirty states, logs, and preimages
 	for addr := range s.journal.dirties {
 		// As documented [here](https://github.com/ethereum/go-ethereum/pull/16485#issuecomment-380438527),
@@ -870,11 +875,11 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 // It is called in between transactions to get the root hash that
 // goes into transaction receipts.
 func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
-	fmt.Println("--debug--7.3.1.1--")
+	fmt.Println("--debug--7.3.1.1--", s.originalRoot)
 
 	// Finalise all the dirty storage states and write them into the tries
 	s.Finalise(deleteEmptyObjects)
-	fmt.Println("--debug--7.3.1.2--")
+	fmt.Println("--debug--7.3.1.2--", s.originalRoot)
 
 	// If there was a trie prefetcher operating, it gets aborted and irrevocably
 	// modified after we start retrieving tries. Remove it from the statedb after
@@ -890,7 +895,7 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 			s.prefetcher = nil
 		}()
 	}
-	fmt.Println("--debug--7.3.1.3--")
+	fmt.Println("--debug--7.3.1.3--", s.originalRoot)
 
 	// Although naively it makes sense to retrieve the account trie and then do
 	// the contract storage and account updates sequentially, that short circuits
@@ -900,9 +905,11 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	for addr := range s.stateObjectsPending {
 		if obj := s.stateObjects[addr]; !obj.deleted {
 			obj.updateRoot()
+			//fmt.Println("--debug--7.3.1.3---loop--", s.trie.Hash())
+
 		}
 	}
-	fmt.Println("--debug--7.3.1.4--")
+	fmt.Println("--debug--7.3.1.4--", prefetcher, s.trie.Hash())
 
 	// Now we're about to start to write changes to the trie. The trie is so far
 	// _untouched_. We can check with the prefetcher, if it can give us a trie
@@ -913,6 +920,7 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 		}
 	}
 	usedAddrs := make([][]byte, 0, len(s.stateObjectsPending))
+	fmt.Println("-----123123123123------", len(s.stateObjectsPending))
 	for addr := range s.stateObjectsPending {
 		if obj := s.stateObjects[addr]; obj.deleted {
 			s.deleteStateObject(obj)
@@ -923,7 +931,7 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 		}
 		usedAddrs = append(usedAddrs, common.CopyBytes(addr[:])) // Copy needed for closure
 	}
-	fmt.Println("--debug--7.3.1.5--")
+	fmt.Println("--debug--7.3.1.5--", s.trie.Hash())
 
 	if prefetcher != nil {
 		prefetcher.used(common.Hash{}, s.originalRoot, usedAddrs)
@@ -935,7 +943,7 @@ func (s *StateDB) IntermediateRoot(deleteEmptyObjects bool) common.Hash {
 	if metrics.EnabledExpensive {
 		defer func(start time.Time) { s.AccountHashes += time.Since(start) }(time.Now())
 	}
-	fmt.Println("--debug--7.3.1.6--")
+	fmt.Println("--debug--7.3.1.6--", s.trie.Hash())
 
 	return s.trie.Hash()
 }
@@ -1173,7 +1181,7 @@ func (s *StateDB) handleDestruction(nodes *trienode.MergedNodeSet) (map[common.A
 // The associated block number of the state transition is also provided
 // for more chain context.
 func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, error) {
-	fmt.Println("--debug--7.3.1--")
+	fmt.Println("--debug--7.3.1--", s.originalRoot)
 
 	// Short circuit in case any database failure occurred earlier.
 	if s.dbErr != nil {
@@ -1181,7 +1189,7 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 	}
 	// Finalize any pending changes and merge everything into the tries
 	s.IntermediateRoot(deleteEmptyObjects)
-	fmt.Println("--debug--7.3.2--")
+	fmt.Println("--debug--7.3.2--", s.originalRoot)
 
 	// Commit objects to the trie, measuring the elapsed time
 	var (
@@ -1252,7 +1260,7 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 		}
 		accountTrieNodesUpdated, accountTrieNodesDeleted = set.Size()
 	}
-	fmt.Println("--debug--7.3.6--")
+	fmt.Println("--debug--7.3.6--trie--", root)
 
 	if metrics.EnabledExpensive {
 		s.AccountCommits += time.Since(start)
@@ -1307,6 +1315,7 @@ func (s *StateDB) Commit(block uint64, deleteEmptyObjects bool) (common.Hash, er
 			return common.Hash{}, err
 		}
 		s.originalRoot = root
+		fmt.Println("----debug----0.0.0.3---", s.originalRoot)
 		fmt.Println("--debug--7.3.9--")
 
 		if metrics.EnabledExpensive {

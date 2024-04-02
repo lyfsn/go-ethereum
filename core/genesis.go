@@ -21,9 +21,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"math/big"
-	"sort"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -113,41 +112,39 @@ func ReadGenesis(db ethdb.Database) (*Genesis, error) {
 	return &genesis, nil
 }
 
-type TrieAccout struct {
-	Nonce       uint64
-	Balance     *big.Int
-	StorageRoot common.Hash
-	CodeHash    common.Hash
-}
-
-func (ta *TrieAccout) EncodeRLP(w io.Writer) (err error) {
-	return rlp.Encode(w, []interface{}{
-		ta.Nonce,
-		ta.Balance,
-		ta.StorageRoot,
-		ta.CodeHash,
-	})
-}
+//type TrieAccout struct {
+//	Nonce       uint64
+//	Balance     *big.Int
+//	StorageRoot common.Hash
+//	CodeHash    common.Hash
+//}
+//
+//func (ta *TrieAccout) EncodeRLP(w io.Writer) (err error) {
+//	return rlp.Encode(w, []interface{}{
+//		ta.Nonce,
+//		ta.Balance,
+//		ta.StorageRoot,
+//		ta.CodeHash,
+//	})
+//}
 
 var accountDataPairs []struct {
 	Hash []byte
 	Data []byte
 }
 
-// hashAlloc computes the state root according to the genesis specification.
 func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 	fmt.Println("--debug--7.3--")
 	// Create a trie db and trie
 	mdb := rawdb.NewMemoryDatabase()
 	tdb := triedb.NewDatabase(mdb, triedb.HashDefaults)
 	defer tdb.Close()
+	//tr, _ := trie.New(trie.StateTrieID(types.EmptyRootHash), tdb)
 	tr := trie.NewEmpty(tdb)
 
-	//trieAccounts := make(map[common.Address]TrieAccout)
 	// Iterate over genesis alloc to insert data into trie
 	for addr, account := range *ga {
 		storageRoot := common.Hash{}
-		var err error
 		if account.Storage != nil {
 			mdb2 := rawdb.NewMemoryDatabase()
 			tdb2 := triedb.NewDatabase(mdb2, triedb.HashDefaults)
@@ -159,54 +156,58 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 			}
 			for key, value := range account.Storage {
 				h2 := crypto.Keccak256(key.Bytes())
+				trimmed := common.TrimLeftZeroes(value[:])
+				v, _ := rlp.EncodeToBytes(trimmed)
 				pairs = append(pairs, struct {
 					Key   []byte
 					Value []byte
-				}{h2[:], value.Bytes()})
+				}{h2[:], v})
 			}
-			sort.Slice(pairs, func(i, j int) bool {
-				return common.BytesToHash(pairs[i].Key).Big().Cmp(common.BytesToHash(pairs[j].Key).Big()) < 0
-			})
+			//sort.Slice(pairs, func(i, j int) bool {
+			//	return common.BytesToHash(pairs[i].Key).Big().Cmp(common.BytesToHash(pairs[j].Key).Big()) < 0
+			//})
 
 			for _, pair := range pairs {
-				hex := common.Bytes2Hex(pair.Key)
-				fmt.Println("--debug--7.3.2---", hex, pair.Value)
 				tr2.Update(pair.Key, pair.Value)
 			}
 
-			storageRoot, _, err = tr2.Commit(false)
-			if err != nil {
-				return common.Hash{}, err
-			}
-			fmt.Println("--debug--7.3.2----------------------", account.Nonce, account.Balance, storageRoot, crypto.Keccak256Hash(account.Code))
+			storageRoot, _, _ = tr2.Commit(false)
 		}
-		ta := TrieAccout{
-			Balance:     account.Balance,
-			Nonce:       account.Nonce,
-			StorageRoot: storageRoot,
-			CodeHash:    crypto.Keccak256Hash(account.Code),
+		if account.Storage == nil {
+			storageRoot = common.HexToHash("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
+		}
+		ta := types.StateAccount{
+			Balance:  uint256.NewInt(account.Balance.Uint64()),
+			Nonce:    account.Nonce,
+			Root:     storageRoot,
+			CodeHash: crypto.Keccak256Hash(account.Code).Bytes(),
 		}
 
-		accountRlpBuf, err := rlp.EncodeToBytes(&ta)
-		if err != nil {
-			panic(err)
-		}
+		//fmt.Println("--debug--7.3.2-2--", ta.Balance, ta.Nonce, ta.Root, ta.CodeHash)
+
+		accountRLP := types.SlimAccountRLP(ta)
+		fullAccountRLP, _ := types.FullAccountRLP(accountRLP)
 
 		h := crypto.Keccak256Hash(addr.Bytes())
 
 		accountDataPairs = append(accountDataPairs, struct {
 			Hash []byte
 			Data []byte
-		}{h[:], accountRlpBuf})
+		}{h[:], fullAccountRLP})
 	}
 
-	sort.Slice(accountDataPairs, func(i, j int) bool {
-		return bytes.Compare(accountDataPairs[i].Hash, accountDataPairs[j].Hash) < 0
-	})
+	//sort.Slice(accountDataPairs, func(i, j int) bool {
+	//	return bytes.Compare(accountDataPairs[i].Hash, accountDataPairs[j].Hash) < 0
+	//})
 
 	// Iterate over the sorted slice to update the trie
+	fmt.Println("-------11112313213------", len(accountDataPairs))
 	for _, pair := range accountDataPairs {
+		hash := common.BytesToHash(pair.Hash)
+		fmt.Println("--debug--7.3.2------------", hash, pair.Data)
+		fmt.Println("--debug--7.3.2---1111---------", tr.Hash())
 		err := tr.Update(pair.Hash, pair.Data)
+		fmt.Println("--debug--7.3.2---2222---------", tr.Hash())
 		if err != nil {
 			return common.Hash{}, err
 		}
@@ -223,36 +224,36 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 	return rootHash, nil
 }
 
-//func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
-//	//If a genesis-time verkle trie is requested, create a trie config
-//	//with the verkle trie enabled so that the tree can be initialized
-//	//as such.
-//	var config *triedb.Config
-//	if isVerkle {
-//		config = &triedb.Config{
-//			PathDB:   pathdb.Defaults,
-//			IsVerkle: true,
-//		}
-//	}
-//	// Create an ephemeral in-memory database for computing hash,
-//	// all the derived states will be discarded to not pollute disk.
-//	db := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), config)
-//	statedb, err := state.New(types.EmptyRootHash, db, nil)
-//	if err != nil {
-//		return common.Hash{}, err
-//	}
-//	for addr, account := range *ga {
-//		if account.Balance != nil {
-//			statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
-//		}
-//		statedb.SetCode(addr, account.Code)
-//		statedb.SetNonce(addr, account.Nonce)
-//		for key, value := range account.Storage {
-//			statedb.SetState(addr, key, value)
-//		}
-//	}
-//	return statedb.Commit(0, false)
-//}
+func hashAlloc2(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
+	//If a genesis-time verkle trie is requested, create a trie config
+	//with the verkle trie enabled so that the tree can be initialized
+	//as such.
+	var config *triedb.Config
+	if isVerkle {
+		config = &triedb.Config{
+			PathDB:   pathdb.Defaults,
+			IsVerkle: true,
+		}
+	}
+	// Create an ephemeral in-memory database for computing hash,
+	// all the derived states will be discarded to not pollute disk.
+	db := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), config)
+	statedb, err := state.New(types.EmptyRootHash, db, nil)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	for addr, account := range *ga {
+		if account.Balance != nil {
+			statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
+		}
+		statedb.SetCode(addr, account.Code)
+		statedb.SetNonce(addr, account.Nonce)
+		for key, value := range account.Storage {
+			statedb.SetState(addr, key, value)
+		}
+	}
+	return statedb.Commit(0, false)
+}
 
 // flushAlloc is very similar with hash, but the main difference is all the generated
 // states will be persisted into the given database. Also, the genesis state

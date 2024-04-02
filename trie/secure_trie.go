@@ -17,6 +17,7 @@
 package trie
 
 import (
+	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/rlp"
@@ -170,6 +171,7 @@ func (t *StateTrie) UpdateAccount(address common.Address, acc *types.StateAccoun
 	if err != nil {
 		return err
 	}
+	fmt.Println("---0000----", common.Bytes2Hex(hk), data)
 	if err := t.trie.Update(hk, data); err != nil {
 		return err
 	}
