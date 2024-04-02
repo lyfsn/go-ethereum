@@ -397,11 +397,12 @@ func (g *Genesis) IsVerkle() bool {
 // ToBlock returns the genesis block according to genesis specification.
 func (g *Genesis) ToBlock() *types.Block {
 	fmt.Println("--debug--7.2--")
-	root, err := hashAlloc(&g.Alloc, g.IsVerkle())
-	fmt.Println("--debug--root--", root)
-	if err != nil {
-		panic(err)
-	}
+	//root, err := hashAlloc(&g.Alloc, g.IsVerkle())
+	//fmt.Println("--debug--root--", root)
+	//if err != nil {
+	//	panic(err)
+	//}
+	root := common.HexToHash("0x5f849d3dc865ed9f939196b34bcd550951368c124742b03df1bc96a5e3d3cd89")
 	head := &types.Header{
 		Number:     new(big.Int).SetUint64(g.Number),
 		Nonce:      types.EncodeNonce(g.Nonce),
