@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"math/big"
+	"sort"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -163,9 +164,9 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 					Value []byte
 				}{h2[:], v})
 			}
-			//sort.Slice(pairs, func(i, j int) bool {
-			//	return common.BytesToHash(pairs[i].Key).Big().Cmp(common.BytesToHash(pairs[j].Key).Big()) < 0
-			//})
+			sort.Slice(pairs, func(i, j int) bool {
+				return common.BytesToHash(pairs[i].Key).Big().Cmp(common.BytesToHash(pairs[j].Key).Big()) < 0
+			})
 
 			for _, pair := range pairs {
 				tr2.Update(pair.Key, pair.Value)
@@ -176,19 +177,23 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 		if account.Storage == nil {
 			storageRoot = common.HexToHash("0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421")
 		}
+		fromBig, _ := uint256.FromBig(account.Balance)
 		ta := types.StateAccount{
-			Balance:  uint256.NewInt(account.Balance.Uint64()),
 			Nonce:    account.Nonce,
+			Balance:  fromBig,
 			Root:     storageRoot,
 			CodeHash: crypto.Keccak256Hash(account.Code).Bytes(),
 		}
 
 		//fmt.Println("--debug--7.3.2-2--", ta.Balance, ta.Nonce, ta.Root, ta.CodeHash)
 
-		accountRLP := types.SlimAccountRLP(ta)
-		fullAccountRLP, _ := types.FullAccountRLP(accountRLP)
+		//accountRLP := types.SlimAccountRLP(ta)
+		//fullAccountRLP, _ := types.FullAccountRLP(accountRLP)
+
+		fullAccountRLP, _ := rlp.EncodeToBytes(&ta)
 
 		h := crypto.Keccak256Hash(addr.Bytes())
+		//fmt.Println("--debug--7.3.2-2--", addr, h)
 
 		accountDataPairs = append(accountDataPairs, struct {
 			Hash []byte
@@ -196,18 +201,18 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 		}{h[:], fullAccountRLP})
 	}
 
-	//sort.Slice(accountDataPairs, func(i, j int) bool {
-	//	return bytes.Compare(accountDataPairs[i].Hash, accountDataPairs[j].Hash) < 0
-	//})
+	sort.Slice(accountDataPairs, func(i, j int) bool {
+		return bytes.Compare(accountDataPairs[i].Hash, accountDataPairs[j].Hash) < 0
+	})
 
 	// Iterate over the sorted slice to update the trie
 	fmt.Println("-------11112313213------", len(accountDataPairs))
 	for _, pair := range accountDataPairs {
-		hash := common.BytesToHash(pair.Hash)
+		//hash := common.Bytes2Hex(pair.Hash)
 		fmt.Println("--debug--7.3.2------------", hash, pair.Data)
-		fmt.Println("--debug--7.3.2---1111---------", tr.Hash())
+		//fmt.Println("--debug--7.3.2---1111---------", tr.Hash())
 		err := tr.Update(pair.Hash, pair.Data)
-		fmt.Println("--debug--7.3.2---2222---------", tr.Hash())
+		//fmt.Println("--debug--7.3.2---2222---------", tr.Hash())
 		if err != nil {
 			return common.Hash{}, err
 		}

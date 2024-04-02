@@ -507,11 +507,11 @@ func (s *StateDB) updateStateObject(obj *stateObject) {
 	}
 	// Encode the account and update the account trie
 	addr := obj.Address()
-	fmt.Println("----1111----", s.trie.Hash())
+	//fmt.Println("----1111----", s.trie.Hash())
 	if err := s.trie.UpdateAccount(addr, &obj.data); err != nil {
 		s.setError(fmt.Errorf("updateStateObject (%x) error: %v", addr[:], err))
 	}
-	fmt.Println("----2222----", s.trie.Hash())
+	//fmt.Println("----2222----", s.trie.Hash())
 	if obj.dirtyCode {
 		s.trie.UpdateContractCode(obj.Address(), common.BytesToHash(obj.CodeHash()), obj.code)
 	}
