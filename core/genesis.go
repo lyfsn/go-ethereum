@@ -21,7 +21,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
+	"sort"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -37,7 +39,6 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
-	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
 )
 
@@ -112,43 +113,148 @@ func ReadGenesis(db ethdb.Database) (*Genesis, error) {
 	return &genesis, nil
 }
 
+type TrieAccout struct {
+	Nonce       uint64
+	Balance     *big.Int
+	StorageRoot common.Hash
+	CodeHash    common.Hash
+}
+
+func (ta *TrieAccout) EncodeRLP(w io.Writer) (err error) {
+	return rlp.Encode(w, []interface{}{
+		ta.Nonce,
+		ta.Balance,
+		ta.StorageRoot,
+		ta.CodeHash,
+	})
+}
+
+var accountDataPairs []struct {
+	Hash []byte
+	Data []byte
+}
+
 // hashAlloc computes the state root according to the genesis specification.
 func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 	fmt.Println("--debug--7.3--")
-	// If a genesis-time verkle trie is requested, create a trie config
-	// with the verkle trie enabled so that the tree can be initialized
-	// as such.
-	var config *triedb.Config
-	if isVerkle {
-		config = &triedb.Config{
-			PathDB:   pathdb.Defaults,
-			IsVerkle: true,
+	// Create a trie db and trie
+	mdb := rawdb.NewMemoryDatabase()
+	tdb := triedb.NewDatabase(mdb, triedb.HashDefaults)
+	defer tdb.Close()
+	tr := trie.NewEmpty(tdb)
+
+	//trieAccounts := make(map[common.Address]TrieAccout)
+	// Iterate over genesis alloc to insert data into trie
+	for addr, account := range *ga {
+		storageRoot := common.Hash{}
+		var err error
+		if account.Storage != nil {
+			mdb2 := rawdb.NewMemoryDatabase()
+			tdb2 := triedb.NewDatabase(mdb2, triedb.HashDefaults)
+			defer tdb2.Close()
+			tr2 := trie.NewEmpty(tdb)
+			var pairs []struct {
+				Key   []byte
+				Value []byte
+			}
+			for key, value := range account.Storage {
+				h2 := crypto.Keccak256Hash(key.Bytes())
+				pairs = append(pairs, struct {
+					Key   []byte
+					Value []byte
+				}{h2[:], value.Bytes()})
+			}
+			sort.Slice(pairs, func(i, j int) bool {
+				return common.BytesToHash(pairs[i].Key).Big().Cmp(common.BytesToHash(pairs[j].Key).Big()) < 0
+			})
+
+			for _, pair := range pairs {
+				tr2.Update(pair.Key, pair.Value)
+			}
+
+			storageRoot, _, err = tr2.Commit(false)
+			if err != nil {
+				return common.Hash{}, err
+			}
+			//fmt.Println("--debug--7.3.2--", addr, storageRoot)
 		}
+		ta := TrieAccout{
+			Balance:     account.Balance,
+			Nonce:       account.Nonce,
+			CodeHash:    crypto.Keccak256Hash(account.Code),
+			StorageRoot: storageRoot,
+		}
+
+		accountRlpBuf, err := rlp.EncodeToBytes(&ta)
+		if err != nil {
+			panic(err)
+		}
+
+		h := crypto.Keccak256Hash(addr.Bytes())
+
+		accountDataPairs = append(accountDataPairs, struct {
+			Hash []byte
+			Data []byte
+		}{h[:], accountRlpBuf})
 	}
-	// Create an ephemeral in-memory database for computing hash,
-	// all the derived states will be discarded to not pollute disk.
-	db := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), config)
-	statedb, err := state.New(types.EmptyRootHash, db, nil)
+
+	sort.Slice(accountDataPairs, func(i, j int) bool {
+		return bytes.Compare(accountDataPairs[i].Hash, accountDataPairs[j].Hash) < 0
+	})
+
+	// Iterate over the sorted slice to update the trie
+	for _, pair := range accountDataPairs {
+		tr.Update(pair.Hash, pair.Data)
+	}
+
+	// Commit changes to compute the root hash
+	rootHash, _, err := tr.Commit(false)
 	if err != nil {
 		return common.Hash{}, err
 	}
-	for addr, account := range *ga {
-		if account.Balance != nil {
-			statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
-		}
-		statedb.SetCode(addr, account.Code)
-		statedb.SetNonce(addr, account.Nonce)
-		for key, value := range account.Storage {
-			statedb.SetState(addr, key, value)
-		}
-	}
-	return statedb.Commit(0, false)
+
+	fmt.Println("--debug--7.3--end--", rootHash)
+
+	return rootHash, nil
+	// ---------------------------------
 }
+
+//func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
+// If a genesis-time verkle trie is requested, create a trie config
+// with the verkle trie enabled so that the tree can be initialized
+// as such.
+//var config *triedb.Config
+//if isVerkle {
+//	config = &triedb.Config{
+//		PathDB:   pathdb.Defaults,
+//		IsVerkle: true,
+//	}
+//}
+//// Create an ephemeral in-memory database for computing hash,
+//// all the derived states will be discarded to not pollute disk.
+//db := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), config)
+//statedb, err := state.New(types.EmptyRootHash, db, nil)
+//if err != nil {
+//	return common.Hash{}, err
+//}
+//for addr, account := range *ga {
+//	if account.Balance != nil {
+//		statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
+//	}
+//	statedb.SetCode(addr, account.Code)
+//	statedb.SetNonce(addr, account.Nonce)
+//	for key, value := range account.Storage {
+//		statedb.SetState(addr, key, value)
+//	}
+//}
+//return statedb.Commit(0, false)
+//}
 
 // flushAlloc is very similar with hash, but the main difference is all the generated
 // states will be persisted into the given database. Also, the genesis state
 // specification will be flushed as well.
 func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedb *triedb.Database, blockhash common.Hash) error {
+	fmt.Println("--debug--8.1.1--")
 	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseWithNodeDB(db, triedb), nil)
 	if err != nil {
 		return err
@@ -163,10 +269,14 @@ func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedb *triedb.Databa
 			statedb.SetState(addr, key, value)
 		}
 	}
+	fmt.Println("--debug--8.1.2--")
+
 	root, err := statedb.Commit(0, false)
 	if err != nil {
 		return err
 	}
+	fmt.Println("--debug--8.1.3--")
+
 	// Commit newly generated states into disk if it's not empty.
 	if root != types.EmptyRootHash {
 		if err := triedb.Commit(root, true); err != nil {
@@ -397,12 +507,12 @@ func (g *Genesis) IsVerkle() bool {
 // ToBlock returns the genesis block according to genesis specification.
 func (g *Genesis) ToBlock() *types.Block {
 	fmt.Println("--debug--7.2--")
-	//root, err := hashAlloc(&g.Alloc, g.IsVerkle())
-	//fmt.Println("--debug--root--", root)
-	//if err != nil {
-	//	panic(err)
-	//}
-	root := common.HexToHash("0x5f849d3dc865ed9f939196b34bcd550951368c124742b03df1bc96a5e3d3cd89")
+	root, err := hashAlloc(&g.Alloc, g.IsVerkle())
+	fmt.Println("--debug--7.2-root--", root)
+	if err != nil {
+		panic(err)
+	}
+	//root := common.HexToHash("0x5f849d3dc865ed9f939196b34bcd550951368c124742b03df1bc96a5e3d3cd89")
 	head := &types.Header{
 		Number:     new(big.Int).SetUint64(g.Number),
 		Nonce:      types.EncodeNonce(g.Nonce),
@@ -479,9 +589,11 @@ func (g *Genesis) Commit(db ethdb.Database, triedb *triedb.Database) (*types.Blo
 	// All the checks has passed, flushAlloc the states derived from the genesis
 	// specification as well as the specification itself into the provided
 	// database.
+	fmt.Println("--debug--8.1--")
 	if err := flushAlloc(&g.Alloc, db, triedb, block.Hash()); err != nil {
 		return nil, err
 	}
+	fmt.Println("--debug--8.2--")
 	rawdb.WriteTd(db, block.Hash(), block.NumberU64(), block.Difficulty())
 	rawdb.WriteBlock(db, block)
 	rawdb.WriteReceipts(db, block.Hash(), block.NumberU64(), nil)
