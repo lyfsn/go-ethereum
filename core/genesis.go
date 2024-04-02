@@ -158,7 +158,7 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 				Value []byte
 			}
 			for key, value := range account.Storage {
-				h2 := crypto.Keccak256Hash(key.Bytes())
+				h2 := crypto.Keccak256(key.Bytes())
 				pairs = append(pairs, struct {
 					Key   []byte
 					Value []byte
@@ -169,6 +169,8 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 			})
 
 			for _, pair := range pairs {
+				hex := common.Bytes2Hex(pair.Key)
+				fmt.Println("--debug--7.3.2---", hex, pair.Value)
 				tr2.Update(pair.Key, pair.Value)
 			}
 
@@ -176,13 +178,13 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 			if err != nil {
 				return common.Hash{}, err
 			}
-			//fmt.Println("--debug--7.3.2--", addr, storageRoot)
+			fmt.Println("--debug--7.3.2----------------------", account.Nonce, account.Balance, storageRoot, crypto.Keccak256Hash(account.Code))
 		}
 		ta := TrieAccout{
 			Balance:     account.Balance,
 			Nonce:       account.Nonce,
-			CodeHash:    crypto.Keccak256Hash(account.Code),
 			StorageRoot: storageRoot,
+			CodeHash:    crypto.Keccak256Hash(account.Code),
 		}
 
 		accountRlpBuf, err := rlp.EncodeToBytes(&ta)
@@ -204,7 +206,10 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 
 	// Iterate over the sorted slice to update the trie
 	for _, pair := range accountDataPairs {
-		tr.Update(pair.Hash, pair.Data)
+		err := tr.Update(pair.Hash, pair.Data)
+		if err != nil {
+			return common.Hash{}, err
+		}
 	}
 
 	// Commit changes to compute the root hash
@@ -216,38 +221,37 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 	fmt.Println("--debug--7.3--end--", rootHash)
 
 	return rootHash, nil
-	// ---------------------------------
 }
 
 //func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
-// If a genesis-time verkle trie is requested, create a trie config
-// with the verkle trie enabled so that the tree can be initialized
-// as such.
-//var config *triedb.Config
-//if isVerkle {
-//	config = &triedb.Config{
-//		PathDB:   pathdb.Defaults,
-//		IsVerkle: true,
+//	//If a genesis-time verkle trie is requested, create a trie config
+//	//with the verkle trie enabled so that the tree can be initialized
+//	//as such.
+//	var config *triedb.Config
+//	if isVerkle {
+//		config = &triedb.Config{
+//			PathDB:   pathdb.Defaults,
+//			IsVerkle: true,
+//		}
 //	}
-//}
-//// Create an ephemeral in-memory database for computing hash,
-//// all the derived states will be discarded to not pollute disk.
-//db := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), config)
-//statedb, err := state.New(types.EmptyRootHash, db, nil)
-//if err != nil {
-//	return common.Hash{}, err
-//}
-//for addr, account := range *ga {
-//	if account.Balance != nil {
-//		statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
+//	// Create an ephemeral in-memory database for computing hash,
+//	// all the derived states will be discarded to not pollute disk.
+//	db := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), config)
+//	statedb, err := state.New(types.EmptyRootHash, db, nil)
+//	if err != nil {
+//		return common.Hash{}, err
 //	}
-//	statedb.SetCode(addr, account.Code)
-//	statedb.SetNonce(addr, account.Nonce)
-//	for key, value := range account.Storage {
-//		statedb.SetState(addr, key, value)
+//	for addr, account := range *ga {
+//		if account.Balance != nil {
+//			statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
+//		}
+//		statedb.SetCode(addr, account.Code)
+//		statedb.SetNonce(addr, account.Nonce)
+//		for key, value := range account.Storage {
+//			statedb.SetState(addr, key, value)
+//		}
 //	}
-//}
-//return statedb.Commit(0, false)
+//	return statedb.Commit(0, false)
 //}
 
 // flushAlloc is very similar with hash, but the main difference is all the generated
