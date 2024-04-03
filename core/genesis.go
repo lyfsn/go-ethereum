@@ -192,13 +192,17 @@ func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedbIns *triedb.Dat
 				go func(addr common.Address, account types.Account) {
 					defer wg.Done()
 					defer func() { <-semaphore }()
-					hash := common.BytesToHash(addr.Bytes())
+					//hash := common.BytesToHash(addr.Bytes())
+					hashAddr := crypto.Keccak256(addr.Bytes())
+					hash := common.BytesToHash(hashAddr)
 					rawdb.WriteCode(db, hash, account.Code)
 				}(addr, account)
 
 				tdb := triedb.NewDatabase(rawdb.NewMemoryDatabase(), triedb.HashDefaults)
 				//storageTr := trie.NewEmpty(tdb)
-				hash := common.BytesToHash(addr.Bytes())
+				//hash := common.BytesToHash(addr.Bytes())
+				hashAddr := crypto.Keccak256(addr.Bytes())
+				hash := common.BytesToHash(hashAddr)
 				storageTr, _ := trie.New(trie.StorageTrieID(types.EmptyRootHash, hash, types.EmptyRootHash), tdb)
 				for key, value := range account.Storage {
 					hashedKey := crypto.Keccak256(key.Bytes())
