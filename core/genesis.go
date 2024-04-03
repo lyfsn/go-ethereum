@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/state"
 	"math/big"
 	"strings"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -37,7 +37,6 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/ethereum/go-ethereum/triedb"
-	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
 )
 
@@ -112,36 +111,52 @@ func ReadGenesis(db ethdb.Database) (*Genesis, error) {
 	return &genesis, nil
 }
 
-// hashAlloc computes the state root according to the genesis specification.
-func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
-	// If a genesis-time verkle trie is requested, create a trie config
-	// with the verkle trie enabled so that the tree can be initialized
-	// as such.
-	var config *triedb.Config
-	if isVerkle {
-		config = &triedb.Config{
-			PathDB:   pathdb.Defaults,
-			IsVerkle: true,
+func rootHashAlloc(ga *types.GenesisAlloc) (common.Hash, error) {
+	// Create a trie db and trie
+	tdb := triedb.NewDatabase(rawdb.NewMemoryDatabase(), triedb.HashDefaults)
+	defer tdb.Close()
+	tr := trie.NewEmpty(tdb)
+	// Iterate over genesis alloc to insert data into trie
+	for address, account := range *ga {
+		storageRoot := types.EmptyRootHash
+		var err error
+		if account.Storage != nil {
+			tdbStorage := triedb.NewDatabase(rawdb.NewMemoryDatabase(), triedb.HashDefaults)
+			defer tdbStorage.Close()
+			trStorage := trie.NewEmpty(tdbStorage)
+			for key, value := range account.Storage {
+				h2 := crypto.Keccak256(key.Bytes())
+				trimmed := common.TrimLeftZeroes(value[:])
+				v, _ := rlp.EncodeToBytes(trimmed)
+				trStorage.Update(h2[:], v)
+			}
+			storageRoot, _, err = trStorage.Commit(false)
+			if err != nil {
+				return common.Hash{}, err
+			}
 		}
+		fromBig, _ := uint256.FromBig(account.Balance)
+		sa := types.StateAccount{
+			Nonce:    account.Nonce,
+			Balance:  fromBig,
+			Root:     storageRoot,
+			CodeHash: crypto.Keccak256Hash(account.Code).Bytes(),
+		}
+		saData, _ := rlp.EncodeToBytes(&sa)
+		hashedKey := crypto.Keccak256Hash(address.Bytes())
+		tr.Update(hashedKey[:], saData)
 	}
-	// Create an ephemeral in-memory database for computing hash,
-	// all the derived states will be discarded to not pollute disk.
-	db := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), config)
-	statedb, err := state.New(types.EmptyRootHash, db, nil)
+	// Commit changes to compute the root hash
+	root, _, err := tr.Commit(false)
 	if err != nil {
 		return common.Hash{}, err
 	}
-	for addr, account := range *ga {
-		if account.Balance != nil {
-			statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
-		}
-		statedb.SetCode(addr, account.Code)
-		statedb.SetNonce(addr, account.Nonce)
-		for key, value := range account.Storage {
-			statedb.SetState(addr, key, value)
-		}
-	}
-	return statedb.Commit(0, false)
+	return root, nil
+}
+
+// hashAlloc computes the state root according to the genesis specification.
+func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
+	return rootHashAlloc(ga)
 }
 
 // flushAlloc is very similar with hash, but the main difference is all the generated
