@@ -22,8 +22,12 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/trie/trienode"
+	"github.com/ethereum/go-ethereum/trie/triestate"
+	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -111,7 +115,7 @@ func ReadGenesis(db ethdb.Database) (*Genesis, error) {
 	return &genesis, nil
 }
 
-func rootHashAlloc(ga *types.GenesisAlloc) (common.Hash, error) {
+func rootHashAlloc(ga *types.GenesisAlloc) (common.Hash, *trienode.NodeSet, error) {
 	// Create a trie db and trie
 	tdb := triedb.NewDatabase(rawdb.NewMemoryDatabase(), triedb.HashDefaults)
 	defer tdb.Close()
@@ -132,7 +136,7 @@ func rootHashAlloc(ga *types.GenesisAlloc) (common.Hash, error) {
 			}
 			storageRoot, _, err = trStorage.Commit(false)
 			if err != nil {
-				return common.Hash{}, err
+				return common.Hash{}, nil, err
 			}
 		}
 		fromBig, _ := uint256.FromBig(account.Balance)
@@ -147,22 +151,94 @@ func rootHashAlloc(ga *types.GenesisAlloc) (common.Hash, error) {
 		tr.Update(hashedKey[:], saData)
 	}
 	// Commit changes to compute the root hash
-	root, _, err := tr.Commit(false)
+	root, nodes, err := tr.Commit(false)
 	if err != nil {
-		return common.Hash{}, err
+		return common.Hash{}, nil, err
 	}
-	return root, nil
+	return root, nodes, nil
 }
 
 // hashAlloc computes the state root according to the genesis specification.
 func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
-	return rootHashAlloc(ga)
+	root, _, err := rootHashAlloc(ga)
+	return root, err
+}
+
+// hashAlloc computes the state root according to the genesis specification.
+func hashAlloc2(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
+	// If a genesis-time verkle trie is requested, create a trie config
+	// with the verkle trie enabled so that the tree can be initialized
+	// as such.
+	var config *triedb.Config
+	if isVerkle {
+		config = &triedb.Config{
+			PathDB:   pathdb.Defaults,
+			IsVerkle: true,
+		}
+	}
+	// Create an ephemeral in-memory database for computing hash,
+	// all the derived states will be discarded to not pollute disk.
+	db := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), config)
+	statedb, err := state.New(types.EmptyRootHash, db, nil)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	for addr, account := range *ga {
+		if account.Balance != nil {
+			statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
+		}
+		statedb.SetCode(addr, account.Code)
+		statedb.SetNonce(addr, account.Nonce)
+		for key, value := range account.Storage {
+			statedb.SetState(addr, key, value)
+		}
+	}
+	return statedb.Commit(0, false)
+}
+
+func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedb *triedb.Database, blockhash common.Hash) error {
+	storagesOrigin := make(map[common.Address]map[common.Hash][]byte)
+	accountsOrigin := make(map[common.Address][]byte)
+	for addr, _ := range *ga {
+		originStorage := make(map[common.Hash][]byte)
+		storagesOrigin[addr] = originStorage
+		accountsOrigin[addr] = nil
+	}
+	log.Info("---debug---1---")
+	//root, err := statedb.Commit(0, false)
+	root, nodes, err := rootHashAlloc(ga)
+	if err != nil {
+		return err
+	}
+	log.Info("---debug---2---")
+	// Commit newly generated states into disk if it's not empty.
+	if root != types.EmptyRootHash {
+		log.Info("---debug---3---")
+		incomplete := make(map[common.Address]struct{})
+		set := triestate.New(accountsOrigin, storagesOrigin, incomplete)
+		nodeSet := trienode.NewMergedNodeSet()
+		nodeSet.Merge(nodes)
+		triedb.Update(root, types.EmptyRootHash, 0, nodeSet, set)
+		if err := triedb.Commit(root, true); err != nil {
+			return err
+		}
+	}
+	log.Info("---debug---4---")
+	// Marshal the genesis state specification and persist.
+	blob, err := json.Marshal(ga)
+	if err != nil {
+		return err
+	}
+	log.Info("---debug---5---")
+	rawdb.WriteGenesisStateSpec(db, blockhash, blob)
+	log.Info("---debug---6---")
+	return nil
 }
 
 // flushAlloc is very similar with hash, but the main difference is all the generated
 // states will be persisted into the given database. Also, the genesis state
 // specification will be flushed as well.
-func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedb *triedb.Database, blockhash common.Hash) error {
+func flushAlloc2(ga *types.GenesisAlloc, db ethdb.Database, triedb *triedb.Database, blockhash common.Hash) error {
 	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseWithNodeDB(db, triedb), nil)
 	if err != nil {
 		return err
@@ -400,7 +476,12 @@ func (g *Genesis) IsVerkle() bool {
 
 // ToBlock returns the genesis block according to genesis specification.
 func (g *Genesis) ToBlock() *types.Block {
+	// record speed
+	start := time.Now()
 	root, err := hashAlloc(&g.Alloc, g.IsVerkle())
+	end := time.Now()
+	elapsed := end.Sub(start)
+	fmt.Println("hashAlloc Elapsed time: ", elapsed)
 	if err != nil {
 		panic(err)
 	}
