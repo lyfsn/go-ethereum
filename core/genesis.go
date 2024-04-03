@@ -176,7 +176,7 @@ func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedbIns *triedb.Dat
 	if err != nil {
 		return err
 	}
-	semaphore := make(chan struct{}, 20000)
+	semaphore := make(chan struct{}, 50000)
 	var wg sync.WaitGroup
 	// Commit newly generated states into disk if it's not empty.
 	if root != types.EmptyRootHash {
@@ -187,6 +187,15 @@ func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedbIns *triedb.Dat
 			accountsOrigin[addr] = nil
 
 			if account.Storage != nil {
+				wg.Add(1)
+				semaphore <- struct{}{}
+				go func(addr common.Address, account types.Account) {
+					defer wg.Done()
+					defer func() { <-semaphore }()
+					hash := common.BytesToHash(addr.Bytes())
+					rawdb.WriteCode(db, hash, account.Code)
+				}(addr, account)
+
 				tdb := triedb.NewDatabase(rawdb.NewMemoryDatabase(), triedb.HashDefaults)
 				//storageTr := trie.NewEmpty(tdb)
 				hash := common.BytesToHash(addr.Bytes())
