@@ -21,14 +21,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/big"
-	"strings"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
@@ -36,9 +32,12 @@ import (
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/trie/trienode"
+	"github.com/ethereum/go-ethereum/trie/triestate"
 	"github.com/ethereum/go-ethereum/triedb"
-	"github.com/ethereum/go-ethereum/triedb/pathdb"
 	"github.com/holiman/uint256"
+	"math/big"
+	"strings"
 )
 
 //go:generate go run github.com/fjl/gencodec -type Genesis -field-override genesisSpecMarshaling -out gen_genesis.go
@@ -112,62 +111,74 @@ func ReadGenesis(db ethdb.Database) (*Genesis, error) {
 	return &genesis, nil
 }
 
+func allocStateTrie(ga *types.GenesisAlloc) (common.Hash, *trienode.NodeSet, error) {
+	// Create a trie db and trie
+	tdb := triedb.NewDatabase(rawdb.NewMemoryDatabase(), triedb.HashDefaults)
+	defer tdb.Close()
+	tr := trie.NewEmpty(tdb)
+	// Iterate over genesis alloc to insert data into trie
+	for address, account := range *ga {
+		storageRoot := types.EmptyRootHash
+		var err error
+		if account.Storage != nil {
+			storageTdb := triedb.NewDatabase(rawdb.NewMemoryDatabase(), triedb.HashDefaults)
+			defer storageTdb.Close()
+			storageTr := trie.NewEmpty(storageTdb)
+			for key, value := range account.Storage {
+				hashedKey := crypto.Keccak256(key.Bytes())
+				trimmed := common.TrimLeftZeroes(value[:])
+				storageData, err := rlp.EncodeToBytes(trimmed)
+				if err != nil {
+					return common.Hash{}, nil, err
+				}
+				storageTr.Update(hashedKey[:], storageData)
+			}
+			storageRoot, _, err = storageTr.Commit(false)
+			if err != nil {
+				return common.Hash{}, nil, err
+			}
+		}
+		fromBig, overflow := uint256.FromBig(account.Balance)
+		if overflow {
+			return common.Hash{}, nil, fmt.Errorf("genesis account balance overflow: %v", account.Balance)
+		}
+		sa := types.StateAccount{
+			Nonce:    account.Nonce,
+			Balance:  fromBig,
+			Root:     storageRoot,
+			CodeHash: crypto.Keccak256Hash(account.Code).Bytes(),
+		}
+		saData, _ := rlp.EncodeToBytes(&sa)
+		hashedKey := crypto.Keccak256Hash(address.Bytes())
+		tr.Update(hashedKey[:], saData)
+	}
+	// Commit changes to compute the root hash
+	root, nodes, err := tr.Commit(false)
+	if err != nil {
+		return common.Hash{}, nil, err
+	}
+	return root, nodes, nil
+}
+
 // hashAlloc computes the state root according to the genesis specification.
 func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
-	// If a genesis-time verkle trie is requested, create a trie config
-	// with the verkle trie enabled so that the tree can be initialized
-	// as such.
-	var config *triedb.Config
-	if isVerkle {
-		config = &triedb.Config{
-			PathDB:   pathdb.Defaults,
-			IsVerkle: true,
-		}
-	}
-	// Create an ephemeral in-memory database for computing hash,
-	// all the derived states will be discarded to not pollute disk.
-	db := state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), config)
-	statedb, err := state.New(types.EmptyRootHash, db, nil)
-	if err != nil {
-		return common.Hash{}, err
-	}
-	for addr, account := range *ga {
-		if account.Balance != nil {
-			statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
-		}
-		statedb.SetCode(addr, account.Code)
-		statedb.SetNonce(addr, account.Nonce)
-		for key, value := range account.Storage {
-			statedb.SetState(addr, key, value)
-		}
-	}
-	return statedb.Commit(0, false)
+	root, _, err := allocStateTrie(ga)
+	return root, err
 }
 
 // flushAlloc is very similar with hash, but the main difference is all the generated
 // states will be persisted into the given database. Also, the genesis state
 // specification will be flushed as well.
 func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedb *triedb.Database, blockhash common.Hash) error {
-	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseWithNodeDB(db, triedb), nil)
-	if err != nil {
-		return err
-	}
-	for addr, account := range *ga {
-		if account.Balance != nil {
-			statedb.AddBalance(addr, uint256.MustFromBig(account.Balance))
-		}
-		statedb.SetCode(addr, account.Code)
-		statedb.SetNonce(addr, account.Nonce)
-		for key, value := range account.Storage {
-			statedb.SetState(addr, key, value)
-		}
-	}
-	root, err := statedb.Commit(0, false)
+	root, _, err := allocStateTrie(ga)
 	if err != nil {
 		return err
 	}
 	// Commit newly generated states into disk if it's not empty.
 	if root != types.EmptyRootHash {
+		nodes := trienode.NewMergedNodeSet()
+		states := triestate.New(nil, nil, nil)
+		triedb.Update(root, types.EmptyRootHash, 0, nodes, states)
 		if err := triedb.Commit(root, true); err != nil {
 			return err
 		}
