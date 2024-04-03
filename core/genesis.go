@@ -133,7 +133,7 @@ func allocStateTrie(ga *types.GenesisAlloc) (common.Hash, *trienode.NodeSet, err
 				}
 				storageTr.Update(hashedKey[:], storageData)
 			}
-			storageRoot, _, err = storageTr.Commit(false)
+			storageRoot, _, err = storageTr.Commit(true)
 			if err != nil {
 				return common.Hash{}, nil, err
 			}
@@ -153,7 +153,7 @@ func allocStateTrie(ga *types.GenesisAlloc) (common.Hash, *trienode.NodeSet, err
 		tr.Update(hashedKey[:], saData)
 	}
 	// Commit changes to compute the root hash
-	root, nodes, err := tr.Commit(false)
+	root, nodes, err := tr.Commit(true)
 	if err != nil {
 		return common.Hash{}, nil, err
 	}
@@ -170,14 +170,23 @@ func hashAlloc(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 // states will be persisted into the given database. Also, the genesis state
 // specification will be flushed as well.
 func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedb *triedb.Database, blockhash common.Hash) error {
-	root, _, err := allocStateTrie(ga)
+	root, set, err := allocStateTrie(ga)
 	if err != nil {
 		return err
 	}
 	// Commit newly generated states into disk if it's not empty.
 	if root != types.EmptyRootHash {
+		storagesOrigin := make(map[common.Address]map[common.Hash][]byte)
+		accountsOrigin := make(map[common.Address][]byte)
+		for addr, _ := range *ga {
+			originStorage := make(map[common.Hash][]byte)
+			storagesOrigin[addr] = originStorage
+			accountsOrigin[addr] = nil
+		}
+		incomplete := make(map[common.Address]struct{})
 		nodes := trienode.NewMergedNodeSet()
-		states := triestate.New(nil, nil, nil)
+		nodes.Merge(set)
+		states := triestate.New(accountsOrigin, storagesOrigin, incomplete)
 		triedb.Update(root, types.EmptyRootHash, 0, nodes, states)
 		if err := triedb.Commit(root, true); err != nil {
 			return err
@@ -256,7 +265,9 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 	}
 	// Just commit the new block if there is no stored genesis block.
 	stored := rawdb.ReadCanonicalHash(db, 0)
+	fmt.Println("--debug-----0---")
 	if (stored == common.Hash{}) {
+		fmt.Println("--debug-----0.1---")
 		if genesis == nil {
 			log.Info("Writing default main-net genesis block")
 			genesis = DefaultGenesisBlock()
@@ -275,6 +286,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 	// is initialized with an external ancient store. Commit genesis state
 	// in this case.
 	header := rawdb.ReadHeader(db, stored, 0)
+	fmt.Println("--debug-----0.2---", triedb.Initialized(header.Root), header.Root)
 	if header.Root != types.EmptyRootHash && !triedb.Initialized(header.Root) {
 		if genesis == nil {
 			genesis = DefaultGenesisBlock()
@@ -282,6 +294,7 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 		applyOverrides(genesis.Config)
 		// Ensure the stored genesis matches with the given one.
 		hash := genesis.ToBlock().Hash()
+		fmt.Println("--debug-----1---", hash, stored)
 		if hash != stored {
 			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
 		}
@@ -291,14 +304,17 @@ func SetupGenesisBlockWithOverride(db ethdb.Database, triedb *triedb.Database, g
 		}
 		return genesis.Config, block.Hash(), nil
 	}
+	fmt.Println("--debug-----1.2---")
 	// Check whether the genesis block is already written.
 	if genesis != nil {
 		applyOverrides(genesis.Config)
 		hash := genesis.ToBlock().Hash()
 		if hash != stored {
+			fmt.Println("--debug-----2---")
 			return genesis.Config, hash, &GenesisMismatchError{stored, hash}
 		}
 	}
+	fmt.Println("--debug-----1.3---")
 	// Get the existing chain configuration.
 	newcfg := genesis.configOrDefault(stored)
 	applyOverrides(newcfg)
@@ -397,6 +413,8 @@ func (g *Genesis) IsVerkle() bool {
 // ToBlock returns the genesis block according to genesis specification.
 func (g *Genesis) ToBlock() *types.Block {
 	root, err := hashAlloc(&g.Alloc, g.IsVerkle())
+	//fmt.Println("--debug-----3.0---", g.Alloc)
+	//fmt.Println("--debug-----3.1---", root, err)
 	if err != nil {
 		panic(err)
 	}
