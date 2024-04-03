@@ -197,23 +197,14 @@ func hashAlloc2(ga *types.GenesisAlloc, isVerkle bool) (common.Hash, error) {
 }
 
 func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedb *triedb.Database, blockhash common.Hash) error {
-	storagesOrigin := make(map[common.Address]map[common.Hash][]byte)
-	accountsOrigin := make(map[common.Address][]byte)
-	for addr, _ := range *ga {
-		originStorage := make(map[common.Hash][]byte)
-		storagesOrigin[addr] = originStorage
-		accountsOrigin[addr] = nil
-	}
-	log.Info("---debug---1---")
-	//root, err := statedb.Commit(0, false)
 	root, nodes, err := rootHashAlloc(ga)
 	if err != nil {
 		return err
 	}
-	log.Info("---debug---2---")
 	// Commit newly generated states into disk if it's not empty.
 	if root != types.EmptyRootHash {
-		log.Info("---debug---3---")
+		storagesOrigin := make(map[common.Address]map[common.Hash][]byte)
+		accountsOrigin := make(map[common.Address][]byte)
 		incomplete := make(map[common.Address]struct{})
 		set := triestate.New(accountsOrigin, storagesOrigin, incomplete)
 		nodeSet := trienode.NewMergedNodeSet()
@@ -223,15 +214,12 @@ func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedb *triedb.Databa
 			return err
 		}
 	}
-	log.Info("---debug---4---")
 	// Marshal the genesis state specification and persist.
 	blob, err := json.Marshal(ga)
 	if err != nil {
 		return err
 	}
-	log.Info("---debug---5---")
 	rawdb.WriteGenesisStateSpec(db, blockhash, blob)
-	log.Info("---debug---6---")
 	return nil
 }
 
