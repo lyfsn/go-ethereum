@@ -176,7 +176,7 @@ func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedbIns *triedb.Dat
 	if err != nil {
 		return err
 	}
-	semaphore := make(chan struct{}, 50000)
+	semaphore := make(chan struct{}, 1000000)
 	var wg sync.WaitGroup
 	// Commit newly generated states into disk if it's not empty.
 	if root != types.EmptyRootHash {
@@ -192,15 +192,13 @@ func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedbIns *triedb.Dat
 				go func(addr common.Address, account types.Account) {
 					defer wg.Done()
 					defer func() { <-semaphore }()
-					//hash := common.BytesToHash(addr.Bytes())
-					hashAddr := crypto.Keccak256(addr.Bytes())
-					hash := common.BytesToHash(hashAddr)
+					//hashAddr := crypto.Keccak256(addr.Bytes())
+					//hash := common.BytesToHash(hashAddr)
+					hash := crypto.Keccak256Hash(account.Code)
 					rawdb.WriteCode(db, hash, account.Code)
 				}(addr, account)
 
 				tdb := triedb.NewDatabase(rawdb.NewMemoryDatabase(), triedb.HashDefaults)
-				//storageTr := trie.NewEmpty(tdb)
-				//hash := common.BytesToHash(addr.Bytes())
 				hashAddr := crypto.Keccak256(addr.Bytes())
 				hash := common.BytesToHash(hashAddr)
 				storageTr, _ := trie.New(trie.StorageTrieID(types.EmptyRootHash, hash, types.EmptyRootHash), tdb)
@@ -212,9 +210,6 @@ func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedbIns *triedb.Dat
 				}
 				_, storageSet, _ := storageTr.Commit(true)
 				for path, n := range storageSet.Nodes {
-					if n.IsDeleted() {
-						continue
-					}
 					wg.Add(1)
 					semaphore <- struct{}{}
 					go func(path string, n *trienode.Node) {
@@ -230,9 +225,6 @@ func flushAlloc(ga *types.GenesisAlloc, db ethdb.Database, triedbIns *triedb.Dat
 		nodes.Merge(set)
 		states := triestate.New(accountsOrigin, storagesOrigin, incomplete)
 		for path, n := range set.Nodes {
-			if n.IsDeleted() {
-				continue
-			}
 			// There owner must be zero for account trie.
 			wg.Add(1)
 			semaphore <- struct{}{}
