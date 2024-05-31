@@ -65,6 +65,7 @@ func (it *instructionIterator) Next() bool {
 	}
 
 	it.op = vm.OpCode(it.code[it.pc])
+	fmt.Println("---ispush---")
 	if it.op.IsPush() {
 		a := uint64(it.op) - uint64(vm.PUSH1) + 1
 		u := it.pc + 1 + a

@@ -17,6 +17,7 @@
 package runtime
 
 import (
+	"fmt"
 	"math"
 	"math/big"
 
@@ -177,6 +178,7 @@ func Create(input []byte, cfg *Config) ([]byte, common.Address, uint64, error) {
 // be set.
 func Call(address common.Address, input []byte, cfg *Config) ([]byte, uint64, error) {
 	setDefaults(cfg)
+	fmt.Println("---7.2.1----", cfg.Random)
 
 	var (
 		vmenv   = NewEnv(cfg)
@@ -188,6 +190,7 @@ func Call(address common.Address, input []byte, cfg *Config) ([]byte, uint64, er
 	// - prepare accessList(post-berlin)
 	// - reset transient storage(eip 1153)
 	statedb.Prepare(rules, cfg.Origin, cfg.Coinbase, &address, vm.ActivePrecompiles(rules), nil)
+	fmt.Println("---7.2.2----")
 
 	// Call the code with the given configuration.
 	ret, leftOverGas, err := vmenv.Call(
@@ -197,5 +200,7 @@ func Call(address common.Address, input []byte, cfg *Config) ([]byte, uint64, er
 		cfg.GasLimit,
 		uint256.MustFromBig(cfg.Value),
 	)
+	fmt.Println("---7.2.3----", err)
+
 	return ret, leftOverGas, err
 }

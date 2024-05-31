@@ -17,6 +17,7 @@
 package vm
 
 import (
+	"fmt"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -55,30 +56,68 @@ type EVMInterpreter struct {
 func NewEVMInterpreter(evm *EVM) *EVMInterpreter {
 	// If jump table was not initialised we set the default one.
 	var table *JumpTable
+	//switch {
+	//case evm.chainRules.IsCancun:
+	//	table = &cancunInstructionSet
+	//case evm.chainRules.IsShanghai:
+	//	table = &shanghaiInstructionSet
+	//case evm.chainRules.IsMerge:
+	//	table = &mergeInstructionSet
+	//case evm.chainRules.IsLondon:
+	//	table = &londonInstructionSet
+	//case evm.chainRules.IsBerlin:
+	//	table = &berlinInstructionSet
+	//case evm.chainRules.IsIstanbul:
+	//	table = &istanbulInstructionSet
+	//case evm.chainRules.IsConstantinople:
+	//	table = &constantinopleInstructionSet
+	//case evm.chainRules.IsByzantium:
+	//	table = &byzantiumInstructionSet
+	//case evm.chainRules.IsEIP158:
+	//	table = &spuriousDragonInstructionSet
+	//case evm.chainRules.IsEIP150:
+	//	table = &tangerineWhistleInstructionSet
+	//case evm.chainRules.IsHomestead:
+	//	table = &homesteadInstructionSet
+	//default:
+	//	table = &frontierInstructionSet
+	//}
 	switch {
 	case evm.chainRules.IsCancun:
+		fmt.Println("Entered case: Cancun")
 		table = &cancunInstructionSet
 	case evm.chainRules.IsShanghai:
+		fmt.Println("Entered case: Shanghai")
 		table = &shanghaiInstructionSet
 	case evm.chainRules.IsMerge:
+		fmt.Println("Entered case: Merge")
 		table = &mergeInstructionSet
 	case evm.chainRules.IsLondon:
+		fmt.Println("Entered case: London")
 		table = &londonInstructionSet
 	case evm.chainRules.IsBerlin:
+		fmt.Println("Entered case: Berlin")
 		table = &berlinInstructionSet
 	case evm.chainRules.IsIstanbul:
+		fmt.Println("Entered case: Istanbul")
 		table = &istanbulInstructionSet
 	case evm.chainRules.IsConstantinople:
+		fmt.Println("Entered case: Constantinople")
 		table = &constantinopleInstructionSet
 	case evm.chainRules.IsByzantium:
+		fmt.Println("Entered case: Byzantium")
 		table = &byzantiumInstructionSet
 	case evm.chainRules.IsEIP158:
+		fmt.Println("Entered case: EIP158")
 		table = &spuriousDragonInstructionSet
 	case evm.chainRules.IsEIP150:
+		fmt.Println("Entered case: EIP150")
 		table = &tangerineWhistleInstructionSet
 	case evm.chainRules.IsHomestead:
+		fmt.Println("Entered case: Homestead")
 		table = &homesteadInstructionSet
 	default:
+		fmt.Println("Entered default case")
 		table = &frontierInstructionSet
 	}
 	var extraEips []int
@@ -105,6 +144,8 @@ func NewEVMInterpreter(evm *EVM) *EVMInterpreter {
 // considered a revert-and-consume-all-gas operation except for
 // ErrExecutionReverted which means revert-and-keep-gas-left.
 func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (ret []byte, err error) {
+	fmt.Println("---7.2.2.5.1----")
+
 	// Increment the call depth which is restricted to 1024
 	in.evm.depth++
 	defer func() { in.evm.depth-- }()
@@ -124,6 +165,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 	if len(contract.Code) == 0 {
 		return nil, nil
 	}
+	fmt.Println("---7.2.2.5.2----")
 
 	var (
 		op          OpCode        // current opcode
@@ -153,6 +195,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		returnStack(stack)
 	}()
 	contract.Input = input
+	fmt.Println("---7.2.2.5.3----")
 
 	if debug {
 		defer func() {
@@ -170,6 +213,7 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 	// the execution of one of the operations or until the done flag is set by the
 	// parent context.
 	for {
+
 		if debug {
 			// Capture pre-execution values for tracing.
 			logged, pcCopy, gasCopy = false, pc, contract.Gas
@@ -228,11 +272,15 @@ func (in *EVMInterpreter) Run(contract *Contract, input []byte, readOnly bool) (
 		}
 		// execute the operation
 		res, err = operation.execute(&pc, in, callContext)
+		fmt.Println("---7.2.2.5.4----", err, pc, op)
+
 		if err != nil {
 			break
 		}
+
 		pc++
 	}
+	fmt.Println("---7.2.2.5.5----")
 
 	if err == errStopToken {
 		err = nil // clear stop token error

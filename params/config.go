@@ -18,10 +18,9 @@ package params
 
 import (
 	"fmt"
-	"math/big"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/params/forks"
+	"math/big"
 )
 
 // Genesis hashes to enforce below configs on.
@@ -910,6 +909,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 	if chainID == nil {
 		chainID = new(big.Int)
 	}
+	fmt.Println("---chain rules---", num, isMerge, timestamp)
 	// disallow setting Merge out of order
 	isMerge = isMerge && c.IsLondon(num)
 	return Rules{

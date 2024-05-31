@@ -96,7 +96,9 @@ func timedExec(bench bool, execFunc func() ([]byte, uint64, error)) (output []by
 		var memStatsBefore, memStatsAfter goruntime.MemStats
 		goruntime.ReadMemStats(&memStatsBefore)
 		startTime := time.Now()
+		fmt.Println("---8.1----")
 		output, gasLeft, err = execFunc()
+		fmt.Println("---8.2----", err)
 		stats.time = time.Since(startTime)
 		goruntime.ReadMemStats(&memStatsAfter)
 		stats.allocs = int64(memStatsAfter.Mallocs - memStatsBefore.Mallocs)
@@ -107,6 +109,7 @@ func timedExec(bench bool, execFunc func() ([]byte, uint64, error)) (output []by
 }
 
 func runCmd(ctx *cli.Context) error {
+	fmt.Println("---1----")
 	logconfig := &logger.Config{
 		EnableMemory:     !ctx.Bool(DisableMemoryFlag.Name),
 		DisableStack:     ctx.Bool(DisableStackFlag.Name),
@@ -134,6 +137,7 @@ func runCmd(ctx *cli.Context) error {
 	} else {
 		debugLogger = logger.NewStructLogger(logconfig)
 	}
+	fmt.Println("---2----")
 
 	initialGas := ctx.Uint64(GasFlag.Name)
 	genesisConfig := new(core.Genesis)
@@ -146,6 +150,7 @@ func runCmd(ctx *cli.Context) error {
 	} else {
 		genesisConfig.Config = params.AllDevChainProtocolChanges
 	}
+	fmt.Println("---3----")
 
 	db := rawdb.NewMemoryDatabase()
 	triedb := triedb.NewDatabase(db, &triedb.Config{
@@ -157,6 +162,7 @@ func runCmd(ctx *cli.Context) error {
 	sdb := state.NewDatabaseWithNodeDB(db, triedb)
 	statedb, _ = state.New(genesis.Root(), sdb, nil)
 	chainConfig = genesisConfig.Config
+	fmt.Println("---4----")
 
 	if ctx.String(SenderFlag.Name) != "" {
 		sender = common.HexToAddress(ctx.String(SenderFlag.Name))
@@ -166,6 +172,7 @@ func runCmd(ctx *cli.Context) error {
 	if ctx.String(ReceiverFlag.Name) != "" {
 		receiver = common.HexToAddress(ctx.String(ReceiverFlag.Name))
 	}
+	fmt.Println("---5----")
 
 	var code []byte
 	codeFileFlag := ctx.String(CodeFileFlag.Name)
@@ -226,7 +233,9 @@ func runCmd(ctx *cli.Context) error {
 		EVMConfig: vm.Config{
 			Tracer: tracer,
 		},
+		Random: &genesisConfig.Mixhash,
 	}
+	fmt.Println("---6----")
 
 	if chainConfig != nil {
 		runtimeConfig.ChainConfig = chainConfig
@@ -250,30 +259,38 @@ func runCmd(ctx *cli.Context) error {
 		os.Exit(1)
 	}
 	input := common.FromHex(string(hexInput))
+	fmt.Println("---7----")
 
 	var execFunc func() ([]byte, uint64, error)
 	if ctx.Bool(CreateFlag.Name) {
+		fmt.Println("---7.1----")
+
 		input = append(code, input...)
 		execFunc = func() ([]byte, uint64, error) {
 			output, _, gasLeft, err := runtime.Create(input, &runtimeConfig)
 			return output, gasLeft, err
 		}
+
 	} else {
 		if len(code) > 0 {
 			statedb.SetCode(receiver, code)
 		}
+		fmt.Println("---7.2----")
 		execFunc = func() ([]byte, uint64, error) {
 			return runtime.Call(receiver, input, &runtimeConfig)
 		}
 	}
+	fmt.Println("---8----")
 
 	bench := ctx.Bool(BenchFlag.Name)
 	output, leftOverGas, stats, err := timedExec(bench, execFunc)
+	fmt.Println("---9----", err)
 
 	if ctx.Bool(DumpFlag.Name) {
 		statedb.Commit(genesisConfig.Number, true)
 		fmt.Println(string(statedb.Dump(nil)))
 	}
+	fmt.Println("---10----")
 
 	if ctx.Bool(DebugFlag.Name) {
 		if debugLogger != nil {
@@ -283,6 +300,7 @@ func runCmd(ctx *cli.Context) error {
 		fmt.Fprintln(os.Stderr, "#### LOGS ####")
 		logger.WriteLogs(os.Stderr, statedb.Logs())
 	}
+	fmt.Println("---11----")
 
 	if bench || ctx.Bool(StatDumpFlag.Name) {
 		fmt.Fprintf(os.Stderr, `EVM gas used:    %d
@@ -297,6 +315,7 @@ allocated bytes: %d
 			fmt.Printf(" error: %v\n", err)
 		}
 	}
+	fmt.Println("---12----")
 
 	return nil
 }
